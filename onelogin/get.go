@@ -21,7 +21,6 @@ import (
 	"github.com/icza/gog"
 	log "github.com/sirupsen/logrus"
 	"github.com/spf13/viper"
-
 )
 
 const (
@@ -45,7 +44,45 @@ var (
 )
 
 type DeviceOptions struct {
+	// Detect if a YubiKey is inserted and automatically select the device
 	AutodetectYubiKey bool
+
+	// Override all other choices and select this device name if available
+	MfaDevice string
+}
+
+// NewDeviceOptions returns a configured pointer to a DeviceOptions type
+func NewDeviceOptions() *DeviceOptions {
+	d := new(DeviceOptions)
+	d.setAutodetectYubiKey()
+	d.setMfaDevice()
+
+	log.WithFields(log.Fields{
+		"autodetectYubiKey": d.AutodetectYubiKey,
+		"MfaDevice":         d.MfaDevice,
+	}).Debug("created device options configuration")
+
+	return d
+}
+
+// setAutodetectYubiKey sets the AutodetectYubiKey parameter
+func (d *DeviceOptions) setAutodetectYubiKey() {
+	var a bool
+	if viper.IsSet("global.autodetect-yubikey") {
+		a = viper.GetBool("global.autodetect-yubikey")
+	}
+	if a && yubikey.IsAttached() {
+		d.AutodetectYubiKey = true
+		return
+	}
+}
+
+// setMfaDevice sets the MfaDevice parameter based on user input
+func (d *DeviceOptions) setMfaDevice() {
+	if viper.IsSet("global.mfa-device") {
+		d.MfaDevice = viper.GetString("global.mfa-device")
+		return
+	}
 }
 
 // Get gets temporary credentials for the given app.
@@ -133,9 +170,7 @@ func Get(app, provider, pArn, awsRegion string, duration int32) (*aws.Credential
 		devices := rSaml.Devices
 		log.WithField("Devices", devices).Trace("Devices returned by GenerateSamlAssertion")
 
-		deviceOpts := DeviceOptions{
-			AutodetectYubiKey: autodetectYubiKey(app),
-		}
+		deviceOpts := NewDeviceOptions()
 
 		device, err := getDevice(devices, deviceOpts)
 		if err != nil {
@@ -248,7 +283,7 @@ func Get(app, provider, pArn, awsRegion string, duration int32) (*aws.Credential
 
 // getDevice gets a slice of MFA devices, prompts the user to select one and returns the selected device.
 // If the slice contains only a single device, that device is returned. If the slice is empty, an error is returned.
-func getDevice(devices []Device, opts DeviceOptions) (device *Device, err error) {
+func getDevice(devices []Device, opts *DeviceOptions) (device *Device, err error) {
 	if len(devices) == 0 {
 		// This should never happen
 		err = errors.New("no MFA device returned by Onelogin")
@@ -261,7 +296,19 @@ func getDevice(devices []Device, opts DeviceOptions) (device *Device, err error)
 		return
 	}
 
-	if opts.AutodetectYubiKey && yubikey.IsAttached(){
+	if opts.MfaDevice != "" {
+		for _, d := range devices {
+			if d.DeviceType == opts.MfaDevice {
+				device = &d
+				fmt.Printf("MFA device %s found, automatically selecting it.\n", opts.MfaDevice)
+				return
+			}
+		}
+		// If the user requested device is not found, fall through and continue the device selection process.
+		fmt.Printf("MFA device %s not found.\n", opts.MfaDevice)
+	}
+
+	if opts.AutodetectYubiKey {
 		for _, d := range devices {
 			if d.DeviceType == MFADeviceYubicoYubiKey {
 				device = &d
@@ -301,16 +348,4 @@ func getDevice(devices []Device, opts DeviceOptions) (device *Device, err error)
 	}
 	device = &Device{DeviceID: devices[selection-1].DeviceID, DeviceType: devices[selection-1].DeviceType}
 	return
-}
-
-// autodetectYubiKey returns a bool if YubiKey Autodetection should be used
-func autodetectYubiKey(app string) bool {
-	y := fmt.Sprintf("apps.%s.autodetect-yubikey", app)
-	if viper.IsSet(y) {
-		return viper.GetBool(y)
-	}
-	if viper.IsSet("global.autodetect-yubikey") {
-		return viper.GetBool("global.autodetect-yubikey")
-	}
-	return false
 }

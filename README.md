@@ -288,6 +288,9 @@ To save the credentials to a custom file, use the `-w` flag.
 To print the credentials to the shell instead of storing them in a file, use the `-s` flag. This
 will output shell commands which can be pasted in any shell to use the credentials.
 
+To select a specific MFA device by name instead of choosing from a list, use the `-m` flag. The 
+configuration field `global.mfa-device` may also be set.
+
 ### Storing the password in the key chain
 
 > WARNING: Storing the password without having MFA enabled is a security risk. It allows anyone
